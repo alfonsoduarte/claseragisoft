@@ -1,0 +1,122 @@
+# Clase RAG - entorno local reproducible
+#
+#   n8n .......... orquestador de workflows
+#                  editor en http://localhost:5679
+#   n8n-db ....... base de datos INTERNA de n8n
+#                  (workflows, credenciales, ejecuciones)
+#   vectorstore .. Postgres + pgvector
+#                  la base de CONOCIMIENTO del RAG
+#
+# Son dos bases distintas a proposito. Mezclar el almacenamiento
+# interno de n8n con el corpus del RAG es el error clasico: cuando
+# queres reindexar, te llevas puestos tus workflows.
+#
+# Uso:
+#   cp env.example .env     # y genere N8N_ENCRYPTION_KEY
+#   docker compose up -d
+#   docker compose logs -f n8n
+
+name: clase-rag
+
+services:
+
+  # -------------------------------------------------------------------
+  # Base vectorial: donde viven los embeddings
+  # -------------------------------------------------------------------
+  vectorstore:
+    image: pgvector/pgvector:pg16
+    container_name: clase-rag-vectorstore
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${VECTOR_DB:-ragdb}
+      POSTGRES_USER: ${VECTOR_USER:-raguser}
+      POSTGRES_PASSWORD: ${VECTOR_PASSWORD:-ragpass}
+      TZ: ${TZ:-America/Mexico_City}
+    ports:
+      # Solo en localhost. El 5433 evita chocar con un
+      # Postgres que ya este escuchando en el 5432.
+      - "127.0.0.1:${VECTOR_PORT:-5433}:5432"
+    volumes:
+      - vector_storage:/var/lib/postgresql/data
+      # Los scripts de este directorio corren UNA sola vez,
+      # al crear el volumen por primera vez.
+      - ../db/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # -------------------------------------------------------------------
+  # Base interna de n8n. NO es la base vectorial.
+  # -------------------------------------------------------------------
+  n8n-db:
+    image: postgres:16-alpine
+    container_name: clase-rag-n8n-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${N8N_DB:-n8n}
+      POSTGRES_USER: ${N8N_DB_USER:-n8n}
+      POSTGRES_PASSWORD: ${N8N_DB_PASSWORD:-n8n}
+      TZ: ${TZ:-America/Mexico_City}
+    volumes:
+      - n8n_db_storage:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+  # -------------------------------------------------------------------
+  # n8n
+  # -------------------------------------------------------------------
+  n8n:
+    image: n8nio/n8n:2.38.6
+    container_name: clase-rag-n8n
+    restart: unless-stopped
+    depends_on:
+      n8n-db:
+        condition: service_healthy
+      vectorstore:
+        condition: service_healthy
+    environment:
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: n8n-db
+      DB_POSTGRESDB_PORT: 5432
+      DB_POSTGRESDB_DATABASE: ${N8N_DB:-n8n}
+      DB_POSTGRESDB_USER: ${N8N_DB_USER:-n8n}
+      DB_POSTGRESDB_PASSWORD: ${N8N_DB_PASSWORD:-n8n}
+
+      # Cifra las credenciales guardadas. Si la cambias,
+      # dejan de poder descifrarse. Se genera con:
+      #   openssl rand -hex 32
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?definila en .env}
+
+      # Servimos el editor por http:// -> la cookie no puede
+      # llevar el flag Secure. Si queda en "true", el login
+      # entra en un bucle imposible de diagnosticar.
+      N8N_SECURE_COOKIE: "false"
+      N8N_HOST: localhost
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      # Sin esto, las URLs del Form Trigger apuntarian al
+      # puerto interno 5678 en lugar del 5679.
+      WEBHOOK_URL: http://localhost:${N8N_PORT:-5679}/
+      N8N_EDITOR_BASE_URL: http://localhost:${N8N_PORT:-5679}/
+
+      GENERIC_TIMEZONE: ${TZ:-America/Mexico_City}
+      TZ: ${TZ:-America/Mexico_City}
+
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_VERSION_NOTIFICATIONS_ENABLED: "false"
+      N8N_LOG_LEVEL: info
+    ports:
+      - "127.0.0.1:${N8N_PORT:-5679}:5678"
+    volumes:
+      - n8n_storage:/home/node/.n8n
+
+volumes:
+  vector_storage:
+  n8n_db_storage:
+  n8n_storage:

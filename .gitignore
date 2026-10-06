@@ -1,0 +1,11 @@
+.DS_Store
+*.log
+node_modules/
+
+# Secrets: only .env.example is versioned
+.env
+.env.local
+
+# Local runtime output
+data/
+*.sqlite

@@ -1,0 +1,49 @@
+# Variante "enganchar la base vectorial a un n8n que ya existe".
+#
+# Si ya tenes n8n corriendo con Docker Compose en su propio
+# proyecto, esto le agrega SOLO el contenedor de pgvector, dentro
+# de la misma red, sin tocar tu docker-compose.yml ni tus volumenes.
+#
+#   1) Averigua el nombre real de la red de tu n8n:
+#        docker network ls | grep -i n8n
+#      Un proyecto de compose llamado "n8n" crea "n8n_default".
+#   2) Ajusta N8N_NETWORK si la tuya se llama distinto.
+#   3) docker compose -f docker-compose.vectorstore.yml up -d
+#
+# Desde adentro de n8n la base se alcanza como  vectorstore:5432
+# (NO como localhost: el nombre del servicio es el hostname
+# dentro de la red).
+
+name: clase-rag-vectorstore
+
+services:
+  vectorstore:
+    image: pgvector/pgvector:pg16
+    container_name: clase-rag-vectorstore
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${VECTOR_DB:-ragdb}
+      POSTGRES_USER: ${VECTOR_USER:-raguser}
+      POSTGRES_PASSWORD: ${VECTOR_PASSWORD:-ragpass}
+      TZ: ${TZ:-America/Mexico_City}
+    ports:
+      # El 5433 es para que puedas conectarte con un cliente
+      # desde tu maquina. n8n NO usa este puerto: usa el 5432
+      # por dentro de la red.
+      - "127.0.0.1:${VECTOR_PORT:-5433}:5432"
+    volumes:
+      - vector_storage:/var/lib/postgresql/data
+      - ../db/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+
+volumes:
+  vector_storage:
+
+networks:
+  default:
+    name: ${N8N_NETWORK:-n8n_default}
+    external: true
