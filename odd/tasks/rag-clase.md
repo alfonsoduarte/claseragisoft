@@ -109,19 +109,79 @@ scratch; `docker-compose.vectorstore.yml` attaches a pgvector container to an ex
 **Acceptance:** `workflows/01-ingesta-pdf.json` imports cleanly into 2.38.6, extracts
 text from a PDF, writes chunks + metadata (`file_name`, `doc_id`, `uploaded_at`) into
 the pgvector collection, and is idempotent on re-upload of the same document.
-**Status:** pending
+**Status:** done — authored and import-verified
+
+**Evidence:**
+- `workflows/01-ingesta-pdf.json` imports cleanly into 2.38.6.
+- All node type strings and typeVersions cross-checked against the running image.
+- The risky input step was verified by real execution, not assumption. A harness that
+  reproduces the Form Trigger's output shape (`json.origen` + `binary.documento`) ran
+  through `n8n execute`: `Extract from File` returned `success` with output keys
+  `numpages, numrender, info, text, version`, extracting **1938 characters** that
+  contain the facts the class queries for (`"18 meses"`, `"10%"`).
+- This also settles the binary-property question from source. `Form/utils/utils.js`
+  derives the property name as `getFieldIdentifier(field, nodeVersion)` with
+  `\W -> _`, and `getFieldIdentifier` returns `field.fieldName` only when
+  `typeVersion >= 2.4`. The workflow therefore uses `typeVersion: 2.6` with explicit
+  `fieldName` values, so the binary property is predictably `documento`.
+- The Data Loader expression `{{ $json.text }}` is confirmed to point at the field the
+  extractor actually produces.
+
+**Not yet verified:** the embedding and insert steps, which need an OpenAI API key.
+Tracked under T5.
 
 ### T4 — Workflow 02: grounded Q&A
 **Acceptance:** `workflows/02-consulta-rag.json` imports cleanly, answers questions over
-the collection indexed by Workflow 01, cites the source file, and refuses to answer when
+ the collection indexed by Workflow 01, cites the source file, and refuses to answer when
 the context does not contain the answer.
-**Status:** pending
+**Status:** done — authored and import-verified
+
+**Evidence:**
+- `workflows/02-consulta-rag.json` imports cleanly into 2.38.6.
+- Design choice grounded in the schema: the vector store is wired in `retrieve-as-tool`
+  mode straight into the Agent's `ai_tool` port. `ToolVectorStore` would have required a
+  second language model connection, so this keeps one model and teaches the modern
+  pattern.
+- `toolName` is only rendered up to node version 1.2, so at 1.3 the node *name* becomes
+  the tool name. The node is deliberately named `base_conocimiento` and the prompt refers
+  to that name.
+- Agent 3.1 parameter names confirmed from its Zod schema: `promptType`, `text`,
+  `hasOutputParser`, `needsFallback`, `options` (with `systemMessage` nested). There is no
+  `agent` parameter at this version.
+
+**Not yet verified:** actual retrieval and answer grounding, which need both an OpenAI
+and a DeepSeek API key. Tracked under T5.
 
 ### T5 — End-to-end verification
 **Acceptance:** Observed evidence that the stack runs, a test PDF is indexed, rows exist
 in the pgvector table, and a query returns an answer grounded in the document. Evidence
 recorded here; failure modes reported honestly.
-**Status:** pending
+**Status:** blocked on API credentials — partially verified
+
+**Verified so far:**
+
+| Check | Result |
+| --- | --- |
+| Stack up | pgvector 0.8.7 + n8n 2.38.6, ports 5433 / 5679 |
+| `init.sql` | extension installed, self-check passed |
+| Both workflows import | accepted, ownership recorded |
+| **n8n to pgvector** | connected from inside the n8n container with its own `pg` driver to `vectorstore:5432` |
+| PDF with text | 1938 characters extracted, key facts present |
+| **Scanned PDF** | **0 characters** — the lesson holds on real evidence |
+| Postgres credential fields | `host, database, user, password, port` |
+
+**Blocked:** embeddings, the insert into pgvector, and retrieval all require a real
+OpenAI key (and DeepSeek for Workflow 02). These steps must not be reported as working
+until executed.
+
+**Incidental discovery, relevant to the class:** in n8n 2.38.6, activating a trigger
+webhook outside the UI is not supported. `n8n import:workflow --activeState=fromJson`
+explicitly refuses outside queue or multi-main mode, `n8n publish:workflow` reports
+success while writing nothing, and `webhook_entity` ends up keyed by the node's
+`webhookId` instead of the form `path`, so `/form/<path>` returns 404. Students work
+through the editor, where activation is a normal UI action, so this does not affect the
+class — but it rules out scripted form submission as a verification method and belongs in
+`docs/troubleshooting.md` for anyone who tries to script it.
 
 ### T6 — Test dataset
 **Acceptance:** Three PDFs: plain text, one with a table, and one scanned (no text layer).
@@ -142,4 +202,7 @@ remaining gaps stated.
 
 | Task | Commit | Evidence |
 | --- | --- | --- |
-| — | — | — |
+| T1 | — | Schema extracted from the running 2.38.6 image |
+| T2 | `2c17961` | pgvector 0.8.7, n8n 2.38.6 healthy, `n8n_vectors` absent by design |
+| T6 | `e2001d4` | 1942 / 751 / 0 characters across the three PDFs |
+| T3, T4 | pending | Both workflows import cleanly; extraction verified by execution |

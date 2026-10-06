@@ -1,0 +1,162 @@
+{
+  "id": "consultaRagV1001",
+  "name": "02 - Consulta RAG fundada",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "public": true,
+        "mode": "hostedChat",
+        "initialMessages": "Hola. Preguntame lo que quieras sobre los documentos que se cargaron.",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [-20, 300],
+      "id": "a2000000-0000-4000-8000-000000000001",
+      "name": "Chat de consulta",
+      "webhookId": "b2000000-0000-4000-8000-000000000001"
+    },
+    {
+      "parameters": {
+        "promptType": "auto",
+        "hasOutputParser": false,
+        "options": {
+          "systemMessage": "=Sos un asistente que responde consultas sobre documentos internos.\n\nReglas:\n1. Responde UNICAMENTE con informacion que aparezca en los fragmentos que devuelve la herramienta \"base_conocimiento\".\n2. Si la respuesta no esta en esos fragmentos, deci: \"No encontre esa informacion en la base de conocimiento\". No inventes, no completes con conocimiento general.\n3. Cuando respondas, indica de que archivo salio la informacion, usando el campo \"archivo\" que viene en la metadata del fragmento.\n4. Si los fragmentos se contradicen, mostralo explicitamente en lugar de elegir uno.\n5. Responde en espanol, de forma breve y directa."
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.agent",
+      "typeVersion": 3.1,
+      "position": [300, 300],
+      "id": "a2000000-0000-4000-8000-000000000002",
+      "name": "Agente RAG"
+    },
+    {
+      "parameters": {
+        "mode": "retrieve-as-tool",
+        "toolDescription": "Busca fragmentos relevantes en la base de conocimiento con los documentos cargados. Usala siempre antes de responder.",
+        "topK": 4,
+        "tableName": "n8n_vectors",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.3,
+      "position": [300, 560],
+      "id": "a2000000-0000-4000-8000-000000000003",
+      "name": "base_conocimiento",
+      "credentials": {
+        "postgres": {
+          "id": "REEMPLAZAR",
+          "name": "Postgres - base vectorial"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [300, 760],
+      "id": "a2000000-0000-4000-8000-000000000004",
+      "name": "Embeddings OpenAI",
+      "credentials": {
+        "openAiApi": {
+          "id": "REEMPLAZAR",
+          "name": "OpenAI - embeddings"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "model": "deepseek-chat",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.lmChatDeepSeek",
+      "typeVersion": 1,
+      "position": [480, 560],
+      "id": "a2000000-0000-4000-8000-000000000005",
+      "name": "Modelo DeepSeek",
+      "credentials": {
+        "deepSeekApi": {
+          "id": "REEMPLAZAR",
+          "name": "DeepSeek - chat"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "sessionIdType": "fromInput",
+        "sessionKey": "={{ $json.sessionId }}",
+        "contextWindowLength": 10
+      },
+      "type": "@n8n/n8n-nodes-langchain.memoryBufferWindow",
+      "typeVersion": 1.4,
+      "position": [660, 560],
+      "id": "a2000000-0000-4000-8000-000000000006",
+      "name": "Memoria de conversacion"
+    }
+  ],
+  "connections": {
+    "Chat de consulta": {
+      "main": [
+        [
+          {
+            "node": "Agente RAG",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "base_conocimiento": {
+      "ai_tool": [
+        [
+          {
+            "node": "Agente RAG",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI": {
+      "ai_embedding": [
+        [
+          {
+            "node": "base_conocimiento",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Modelo DeepSeek": {
+      "ai_languageModel": [
+        [
+          {
+            "node": "Agente RAG",
+            "type": "ai_languageModel",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Memoria de conversacion": {
+      "ai_memory": [
+        [
+          {
+            "node": "Agente RAG",
+            "type": "ai_memory",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}

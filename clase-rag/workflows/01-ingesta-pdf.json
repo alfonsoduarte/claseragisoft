@@ -1,0 +1,191 @@
+{
+  "id": "ingestaPdfV1001",
+  "name": "01 - Ingesta de PDF a pgvector",
+  "active": false,
+  "nodes": [
+    {
+      "parameters": {
+        "path": "ingesta-pdf",
+        "formTitle": "Cargar un documento a la base de conocimiento",
+        "formDescription": "Subi un PDF. El texto se extrae, se divide en fragmentos, se convierte en vectores y se guarda en la base vectorial.",
+        "formFields": {
+          "values": [
+            {
+              "fieldName": "documento",
+              "fieldLabel": "Documento PDF",
+              "fieldType": "file",
+              "requiredField": true,
+              "acceptFileTypes": ".pdf",
+              "multipleFiles": false
+            },
+            {
+              "fieldName": "origen",
+              "fieldLabel": "Origen del documento",
+              "fieldType": "text",
+              "placeholder": "Ej: Manual de operaciones"
+            }
+          ]
+        },
+        "responseMode": "onReceived",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.formTrigger",
+      "typeVersion": 2.6,
+      "position": [-20, 300],
+      "id": "a1000000-0000-4000-8000-000000000001",
+      "name": "Formulario de carga",
+      "webhookId": "b1000000-0000-4000-8000-000000000001"
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "binaryPropertyName": "documento",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.1,
+      "position": [220, 300],
+      "id": "a1000000-0000-4000-8000-000000000002",
+      "name": "Extraer texto del PDF"
+    },
+    {
+      "parameters": {
+        "mode": "insert",
+        "tableName": "n8n_vectors",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.vectorStorePGVector",
+      "typeVersion": 1.3,
+      "position": [520, 300],
+      "id": "a1000000-0000-4000-8000-000000000003",
+      "name": "Guardar en pgvector",
+      "credentials": {
+        "postgres": {
+          "id": "REEMPLAZAR",
+          "name": "Postgres - base vectorial"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "dataType": "json",
+        "jsonMode": "expressionData",
+        "jsonData": "={{ $json.text }}",
+        "textSplittingMode": "custom",
+        "options": {
+          "metadata": {
+            "metadataValues": [
+              {
+                "name": "archivo",
+                "value": "={{ $('Formulario de carga').first().json.documento.filename }}"
+              },
+              {
+                "name": "origen",
+                "value": "={{ $('Formulario de carga').first().json.origen }}"
+              },
+              {
+                "name": "cargado_en",
+                "value": "={{ $('Formulario de carga').first().json.submittedAt }}"
+              }
+            ]
+          }
+        }
+      },
+      "type": "@n8n/n8n-nodes-langchain.documentDefaultDataLoader",
+      "typeVersion": 1.1,
+      "position": [520, 520],
+      "id": "a1000000-0000-4000-8000-000000000004",
+      "name": "Cargar documento"
+    },
+    {
+      "parameters": {
+        "chunkSize": 1000,
+        "chunkOverlap": 150,
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.textSplitterRecursiveCharacterTextSplitter",
+      "typeVersion": 1,
+      "position": [520, 720],
+      "id": "a1000000-0000-4000-8000-000000000005",
+      "name": "Dividir en fragmentos"
+    },
+    {
+      "parameters": {
+        "model": "text-embedding-3-small",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.embeddingsOpenAi",
+      "typeVersion": 1.2,
+      "position": [520, 900],
+      "id": "a1000000-0000-4000-8000-000000000006",
+      "name": "Embeddings OpenAI",
+      "credentials": {
+        "openAiApi": {
+          "id": "REEMPLAZAR",
+          "name": "OpenAI - embeddings"
+        }
+      }
+    }
+  ],
+  "connections": {
+    "Formulario de carga": {
+      "main": [
+        [
+          {
+            "node": "Extraer texto del PDF",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extraer texto del PDF": {
+      "main": [
+        [
+          {
+            "node": "Guardar en pgvector",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Cargar documento": {
+      "ai_document": [
+        [
+          {
+            "node": "Guardar en pgvector",
+            "type": "ai_document",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dividir en fragmentos": {
+      "ai_textSplitter": [
+        [
+          {
+            "node": "Cargar documento",
+            "type": "ai_textSplitter",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Embeddings OpenAI": {
+      "ai_embedding": [
+        [
+          {
+            "node": "Guardar en pgvector",
+            "type": "ai_embedding",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
