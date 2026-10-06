@@ -222,23 +222,43 @@ El acta va a aparecer con **0 caracteres**. La frase para dejar picando:
 
 **Fracaso 2 — el error que van a cometer ellos.**
 
-Este es el momento más valioso de la clase. Decilo así:
+Este es el momento más valioso de la clase. Antes de arrancar, decí esto y escribilo en
+la pizarra:
 
-> "Ahora les voy a mostrar el error que se llevan todos, el que no da error y el que más
-> tiempo cuesta encontrar."
+> "Hay dos maneras de equivocarse con el modelo de embeddings, y **no son igual de
+> peligrosas**. Una grita. La otra te deja pasar."
 
-Cambiá el modelo de embeddings **sólo en el workflow 02** (por ejemplo a
-`text-embedding-ada-002`), dejá la ingesta como está, y preguntá lo mismo de siempre.
+**Caso A — distinta dimensión.** Cambiá el modelo del workflow 02 a uno de otra
+ dimensión (768, por ejemplo) y preguntá. Postgres corta en seco:
 
-**Va a devolver una respuesta.** Va a sonar razonable. Y va a estar mal, porque ahora
-estás buscando en un espacio de coordenadas que no tiene nada que ver con el que usaste
-para indexar. Los dos vectores se generaron con funciones distintas, y comparar distancias
-entre ellos no significa nada.
+```text
+ERROR: different vector dimensions 1536 and 768
+```
 
-> "El sistema no se rompió. No hay excepción, no hay log rojo. Devuelve resultados, y son
-> basura. Por eso la regla es: **el modelo de embeddings está congelado en el momento en
-> que indexás**. Si lo cambiás, tenés que reindexar todo. Y si la dimensión cambia —1536
-> contra 1536 acá, pero contra 768 con otros modelos— es literalmente otra tabla."
+> "Ruidoso. Molesto, cinco minutos y listo. Un error explícito es una bendición."
+
+**Caso B — la misma dimensión, otro modelo.** Volvé a `text-embedding-3-small` en la
+ingesta, y en el **workflow 02** poné `text-embedding-ada-002`. Los dos son de 1536
+ dimensiones, así que la base no va a decir nada. Preguntá lo mismo de siempre.
+
+**Va a devolver una respuesta.** Va a sonar razonable. Va a estar mal. Y no hay log rojo,
+ni excepción, ni nada.
+
+> "Acá está la trampa. Los dos modelos producen vectores de 1536 números, pero **no hay
+> ninguna relación entre las coordenadas de uno y las del otro**. Es como comparar
+> distancias en un mapa con distancias en otro mapa distinto y creer que significan lo
+> mismo. Las restas se hacen, el ranking sale, y es basura."
+
+**Y ahora la regla, que es lo que se llevan:**
+
+> "El caso peligroso exige que las dimensiones **coincidan**. Cuando no coinciden, la base
+> te protege. Cuando coinciden y el modelo es otro, nadie te protege. Por eso: **el modelo
+> de embeddings queda congelado en el momento en que indexás**. Si lo cambiás, reindexás
+> todo. No es una recomendación de estilo, es la única forma."
+
+**Preguntá después:** *"¿Cómo se protegerían de esto en un sistema real?"* La respuesta que
+buscás: guardar el nombre del modelo en la metadata de cada fragmento y verificar que
+coincida con el de la consulta antes de responder, en lugar de confiar en la base.
 
 Si el tiempo alcanza, hacé el ejercicio 3 de §10: bajar `chunkSize` a 300 y ver cómo cambia
 la calidad de las respuestas.
@@ -352,9 +372,10 @@ No los prevengas. El aprendizaje está en el diagnóstico.
 | Error | Por qué conviene dejarlo pasar |
 | --- | --- |
 | Poner `localhost` en la credencial de Postgres | Es el error #1. `localhost` dentro de n8n es el propio contenedor. Tiene que ser `vectorstore`. Se arregla en 10 segundos y se recuerda para siempre. |
-| Cambiar el embedding entre ingesta y consulta | El error silencioso. Devuelve basura sin fallar. Vale toda la clase. |
+| Cambiar el embedding entre ingesta y consulta | El error silencioso, **siempre que las dimensiones coincidan**. Si no coinciden, Postgres avisa. Ver bloque 5, caso B. |
+| Crear la credencial y no asignarla en el nodo | El más común de todos, y el más frustrante: dice "no credentials" y parece que la credencial no sirviera. |
 | Subir un PDF escaneado | Falla sin avisar. Deja la lección: en RAG el fracaso es silencioso. |
-| Subir el mismo PDF dos veces | Duplica fragmentos. La misma información aparece dos veces y contamina el ranking. Se arregla con un `doc_id` y borrando antes de insertar; no lo agregué al workflow a propósito, para que sea el ejercicio de mejora. |
+| Subir el mismo PDF dos veces | Duplica fragmentos. La `id` es un `uuid` que genera Postgres en cada insert, así que nunca colisiona y nunca reemplaza. Se arregla con un `doc_id` estable en la metadata; no lo agregué al workflow a propósito, para que sea el ejercicio de mejora. |
 | Poner `chunkOverlap` mayor que `chunkSize` | Genera fragmentos duplicados. Buen bug para que experimenten. |
 
 ---

@@ -16,41 +16,82 @@ CREATE EXTENSION IF NOT EXISTS vector;
 -- ---------------------------------------------------------------------------
 -- 2) La tabla de chunks.
 --
---    NO la creamos acá a propósito. La crea el propio nodo "Postgres PGVector
+--    NO la creamos aca a proposito. La crea el propio nodo "Postgres PGVector
 --    Store" la primera vez que inserta, y lo hace con exactamente la forma que
---    él espera. Si la declaramos nosotros y no coincide (tipo de la columna id,
---    dimensión, índice), los inserts fallan con errores difíciles de leer.
+--    el espera. Si la declaramos nosotros y no coincide, los inserts fallan
+--    con errores dificiles de leer.
 --
---    Lo que el nodo va a crear por vos, con los nombres por defecto de la
---    configuración del nodo (options > Column Names):
+--    Esto es el DDL REAL que el nodo creo en la instancia de la clase,
+--    obtenido con pg_dump despues de la primera ingesta:
 --
---      CREATE TABLE n8n_vectors (
---        id        text PRIMARY KEY,      -- id del chunk
---        embedding vector(1536) NOT NULL, -- 1536 = dimensión de text-embedding-3-small
---        text      text NOT NULL,         -- el chunk de texto
---        metadata  jsonb                  -- de dónde salió: archivo, fecha, etc.
+--      CREATE TABLE public.n8n_vectors (
+--        id        uuid DEFAULT gen_random_uuid() NOT NULL,
+--        text      text,
+--        metadata  jsonb,
+--        embedding public.vector
 --      );
+--      ALTER TABLE ONLY public.n8n_vectors
+--        ADD CONSTRAINT n8n_vectors_pkey PRIMARY KEY (id);
 --
---    Ese DDL es el que se documenta en docs/verificacion.md una vez comprobado
---    contra la base real. Los nombres de columna son configurables desde el nodo.
+--    Tres cosas que conviene mirar de ese DDL:
+--
+--    a) `id` es uuid, no text, y el default lo pone POSTGRES (gen_random_uuid),
+--       no el nodo. Cada ingesta inventa ids nuevos. Por eso subir dos veces el
+--       mismo PDF duplica los fragmentos en lugar de reemplazarlos: ese es el
+--       ejercicio de idempotencia de la clase.
+--
+--    b) `embedding public.vector` va SIN dimension. No dice vector(1536).
+--       Comprobado: la columna acepta un vector de 3 dimensiones sin quejarse.
+--       O sea que la base NO te protege de indexar con el modelo equivocado.
+--
+--    c) Las columnas text, metadata y embedding admiten NULL. El nodo no creo
+--       ninguna restriccion de integridad.
+--
+--    Los nombres de columna son configurables desde el nodo (options > Column
+--    Names); estos son los de fabrica.
 -- ---------------------------------------------------------------------------
 
 -- ---------------------------------------------------------------------------
--- 3) Índice de similitud: opcional.
+-- 3) Por que la leccion del modelo de embeddings es la que mas importa.
 --
---    Sin índice, Postgres recorre la tabla entera en cada consulta. Con pocos
---    cientos de chunks es instantáneo igual, así que NO hace falta para que la
---    clase funcione. Se lo puede dejar comentado y usar como ejercicio avanzado:
---    comparar el plan de ejecución (EXPLAIN ANALYZE) antes y después.
+--    La columna no limita dimension, asi que hay que distinguir DOS casos y
+--    NO son iguales:
 --
---    HNSW aproxima la búsqueda por vecinos más cercanos. `vector_cosine_ops`
---    tiene que coincidir con la distancia configurada en el nodo (Cosine).
+--      Distinta dimension (1536 vs 768). Postgres corta con un error explicito:
+--        ERROR: different vector dimensions 1536 and 768
+--      Ruidoso. Facil de detectar y de arreglar.
+--
+--      MISMA dimension, distinto modelo (text-embedding-3-small vs
+--      text-embedding-ada-002, ambos 1536). No hay error. Las distancias se
+--      calculan, el ranking sale, el modelo responde con seguridad. Y es
+--      basura, porque los dos vectores viven en sistemas de coordenadas que no
+--      tienen ninguna relacion.
+--
+--    El caso peligroso es el segundo, y exige que las dimensiones COINCIDAN.
+--    Por eso la regla es: el modelo de embeddings queda congelado en el momento
+--    de indexar. Si lo cambias, reindexas todo.
+-- ---------------------------------------------------------------------------
+
+-- ---------------------------------------------------------------------------
+-- 4) Indice de similitud.
+--
+--    Comprobado sobre la base real: el nodo crea UNICAMENTE la clave primaria.
+--    No crea indice de similitud. Con 3 fragmentos da igual, porque Postgres
+--    recorre la tabla entera en microsegundos. Pero en un corpus real de miles
+--    de filas, CADA consulta recorre todo y el RAG se vuelve lento.
+--
+--    Buena parte de "RAG que anda pero no escala" es exactamente esto.
+--
+--    HNSW aproxima la busqueda por vecinos mas cercanos. vector_cosine_ops tiene
+--    que coincidir con la distancia configurada en el nodo (Cosine, el default).
+--    Descomentalo y usa EXPLAIN ANALYZE antes y despues: es el ejercicio
+--    avanzado que muestra la diferencia entre que funcione y que escale.
 -- ---------------------------------------------------------------------------
 -- CREATE INDEX IF NOT EXISTS n8n_vectors_embedding_hnsw_idx
 --   ON n8n_vectors USING hnsw (embedding vector_cosine_ops);
 
 -- ---------------------------------------------------------------------------
--- 4) Chequeo rápido de que la extensión quedó instalada.
+-- 5) Chequeo rapido de que la extension quedo instalada.
 --    Esto aparece en los logs del contenedor al levantar el stack.
 -- ---------------------------------------------------------------------------
 DO $$
