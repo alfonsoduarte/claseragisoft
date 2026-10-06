@@ -156,7 +156,7 @@ and a DeepSeek API key. Tracked under T5.
 **Acceptance:** Observed evidence that the stack runs, a test PDF is indexed, rows exist
 in the pgvector table, and a query returns an answer grounded in the document. Evidence
 recorded here; failure modes reported honestly.
-**Status:** blocked on API credentials — partially verified
+**Status:** ingestion verified end to end; retrieval still pending
 
 **Verified so far:**
 
@@ -169,9 +169,27 @@ recorded here; failure modes reported honestly.
 | PDF with text | 1938 characters extracted, key facts present |
 | **Scanned PDF** | **0 characters** — the lesson holds on real evidence |
 | Postgres credential fields | `host, database, user, password, port` |
+| **Ingestion, end to end** | real run, `success`, **3 fragments** from the 2-page manual, `vector_dims = 1536` |
+| Metadata through the Data Loader | 3 of 3 rows carry `archivo`, `origen`, `cargado_en` with the workflow timezone |
+| Key facts indexed | `18 meses`, `10%` and `30 minutos` all present in the stored chunks |
 
-**Blocked:** embeddings, the insert into pgvector, and retrieval all require a real
-OpenAI key (and DeepSeek for Workflow 02). These steps must not be reported as working
+**Three findings that came out of auditing the live database and corrected the docs:**
+
+1. The node creates `id uuid DEFAULT gen_random_uuid() NOT NULL`, not `text`. Because the id
+   comes from Postgres, re-ingesting the same file appends instead of replacing — that is the
+   real mechanism behind the idempotence exercise.
+2. The `embedding` column carries **no dimension constraint**; it accepted a 3-dimensional
+   vector. This splits the embedding-mismatch lesson in two and inverts its emphasis: a
+   dimension mismatch raises a loud error, so Postgres protects you, while the same dimension
+   with a different model is silent. The dangerous case requires the dimensions to match.
+3. The node creates **only the primary key** — no similarity index. Every query is a
+   sequential scan, which is why a working RAG stops scaling.
+
+The dimension and distance tests ran inside a transaction that was rolled back, leaving the
+corpus unchanged.
+
+**Still blocked:** retrieval. Workflow 02 has credentials assigned but has not yet been run
+against the corpus, so no answer has been observed. It must not be reported as working
 until executed.
 
 **Incidental discovery, relevant to the class:** in n8n 2.38.6, activating a trigger
@@ -196,7 +214,16 @@ The scanned one must be documented as the deliberate failure case.
 ### T8 — Closure
 **Acceptance:** Clean tree, evidence summarized, `mem_session_summary` written,
 remaining gaps stated.
-**Status:** pending
+**Status:** in progress — instance cleaned and reset
+
+**Reset state, verified:** the 3 verification harnesses archived and deleted through the
+REST API (`POST /rest/workflows/:id/archive` then `DELETE`, since a workflow must be
+archived before it can be deleted), leaving exactly the two class workflows; vector store
+truncated to 0 fragments; execution history cleared. The 3 credentials were deliberately
+preserved, since re-creating them would cost the teacher their API keys again.
+
+**Remaining:** the student guide, the troubleshooting page and the top-level README, plus
+one final observed retrieval.
 
 ## Evidence log
 

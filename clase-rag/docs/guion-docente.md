@@ -350,18 +350,107 @@ Decí esto mientras corren las consultas:
 > convirtió en 1536 números y quedó guardado acá. Nada de esto es magia, y ustedes pueden
 > auditarlo con una consulta SQL."
 
-**Demo 4 — la consulta.** Workflow 02, la misma pregunta del bloque 1. Respuesta fundada
-con cita del archivo.
+**Demo 4 — la consulta fundada.** Workflow 02, la misma pregunta del bloque 1. Debe
+responder `18 meses` y citar de qué archivo salió. Ahí se cierra el arco: **el mismo
+modelo**, otro insumo.
 
-**Demo 5 — la negativa.** Preguntar algo que no está. Debe negarse.
+**Demo 5 — la negativa.** Preguntar algo que no está en ningún documento ("¿cuánto sale el
+envío internacional?"). Debe negarse. Si inventa, es una oportunidad y no un accidente:
+revisá el system prompt en vivo, delante de ellos.
 
-**Demo 6 — el escaneado.** Subir `03-acta-escaneada.pdf`, preguntar por el acta, fallar, y
-mostrar los 0 caracteres con la consulta agregada.
+**Demo 6 — conocimiento nuevo sin tocar la consulta.** Subí `02-tarifario-servicios.pdf`
+con el formulario del workflow 01 y preguntá *"¿cuánto sale el service premium?"*. Debe
+responder **5.900**. Lo importante es lo que **no** hiciste:
 
-**Demo 7 — el embudo de la decisión.** Hacer que la clase vote: *"si tuvieran que indexar
-5000 PDFs de una empresa, ¿qué cambiarían de lo que hicimos?"* Las respuestas correctas
-apuntan a: topK y chunking por tipo de documento, metadata más rica, reindexado, y un
-evaluador en vez de "a ojo".
+> "Acabo de agregar conocimiento nuevo. ¿Toqué el workflow de consulta? No. Ni una vez.
+> Los dos workflows comparten la base. **Eso** es la separación de planos, y es lo que
+> separa una demo de una arquitectura."
+
+**Demo 7 — el escaneado, el fracaso silencioso.** Subí `03-acta-escaneada.pdf`. El workflow
+va a reportar **éxito**. Después preguntá:
+
+> "¿Por qué se rechazó el lote L-2026-014?"
+
+No lo puede responder. Mostrá la causa:
+
+```sql
+SELECT metadata->>'archivo' AS archivo, count(*) AS fragmentos,
+       sum(length(text))     AS caracteres
+FROM n8n_vectors GROUP BY 1 ORDER BY 1;
+```
+
+El acta figura con **0 caracteres**.
+
+> "En RAG el fracaso más común es silencioso. El sistema no falla: indexa vacío y sigue
+> contento. Si no verificás, esto llega a producción y nadie se enteró."
+
+**Demo 8 — duplicar sin querer.** Subí otra vez `01-manual-operaciones.pdf`. Volvé a la
+consulta del conteo: el manual pasa de **3 a 6 fragmentos**. Explicá el porqué con el DDL
+real:
+
+```sql
+\d n8n_vectors
+```
+
+> "La `id` es un `uuid` que Postgres genera solo, con `gen_random_uuid()`. Nunca colisiona,
+> así que nunca reemplaza: **agrega**. La misma información quedó dos veces y ahora compite
+> consigo misma en el ranking."
+
+Y dejá la pregunta en la pizarra: *"¿cómo lo harían idempotente?"* La respuesta es un
+`doc_id` estable en la metadata y borrar antes de insertar. Es la tarea opcional.
+
+**Demo 9 — el experimento de chunking.** El que enseña que `chunkSize` es una **decisión**
+de calidad y no un parámetro:
+
+```sql
+TRUNCATE n8n_vectors;
+```
+
+Cambiá `Dividir en fragmentos` → chunkSize **1000 → 300**, guardá, y reindexá el manual.
+
+```sql
+SELECT count(*) AS fragmentos, round(avg(length(text))) AS promedio
+FROM n8n_vectors;
+```
+
+Preguntá lo mismo de antes y **pedí evidencia**: *"¿mejoró, empeoró o dio igual? ¿con qué
+lo afirman?"* Ahí es donde aprenden que evaluar RAG a ojo no alcanza. Volvé a 1000 al
+terminar.
+
+**Demo 10 — el error que se llevan todos.** El momento de mayor valor de la clase.
+Escribilo en la pizarra antes de empezar:
+
+> "Hay dos maneras de equivocarse con el modelo de embeddings, y no son igual de
+> peligrosas. Una grita. La otra te deja pasar."
+
+*Caso A — dimensión distinta.* Poné un modelo de 768 dimensiones **sólo en el workflow 02**:
+
+```text
+ERROR: different vector dimensions 1536 and 768
+```
+
+> "Ruidoso. Molesto, cinco minutos y listo. Un error explícito es una bendición."
+
+*Caso B — misma dimensión, otro modelo.* Volvé a 1536 pero con `text-embedding-ada-002` en
+el workflow 02. Preguntá lo mismo de siempre.
+
+**Va a responder.** Va a sonar razonable. Va a estar mal. Y no hay ni un log.
+
+> "Los dos producen 1536 números, pero no hay ninguna relación entre las coordenadas de uno
+> y las del otro. Es como comparar distancias de un mapa con las de otro mapa distinto y
+> creer que significan lo mismo. Las restas se hacen, el ranking sale, y es basura.
+> El caso peligroso **exige que las dimensiones coincidan**. Cuando no coinciden, la base
+> te protege. Cuando coinciden y el modelo es otro, nadie te protege. Por eso: **el modelo
+> de embeddings queda congelado en el momento en que indexás**. Si lo cambiás, reindexás
+> todo."
+
+Cerrá con: *"¿cómo se protegerían en un sistema real?"* → guardar el nombre del modelo en
+la metadata y validarlo antes de responder, en lugar de confiar en la base.
+
+**Demo 11 — el embudo de la decisión.** Hacé votar a la clase: *"si tuvieran que indexar
+5000 PDFs de una empresa, ¿qué cambiarían de lo que hicimos?"* Lo que tiene que aparecer:
+`topK` y chunking por tipo de documento, metadata más rica, **el índice HNSW que el nodo no
+creó**, reindexado, y un evaluador en vez de "a ojo".
 
 ---
 
@@ -460,3 +549,43 @@ Si te quedan cinco minutos y querés el resumen máximo:
 Y debajo, en letra grande:
 
 > **"El modelo no sabe. Le damos los papeles justo antes de responder, y le prohibimos inventar."**
+
+---
+
+## 13. Resetear entre clases
+
+El estado que necesitás para arrancar el bloque 1 es siempre el mismo: **stack arriba,
+credenciales cargadas, workflows importados, base vacía**. La base vacía no es un detalle:
+la demo del fracaso sólo funciona si el agente todavía no tiene los documentos.
+
+**Antes de cada clase:**
+
+```bash
+cd clase-rag/docker && docker compose ps      # los 3 contenedores arriba
+```
+
+```sql
+TRUNCATE n8n_vectors;
+SELECT count(*) FROM n8n_vectors;             -- tiene que dar 0
+```
+
+Y en el editor: los dos workflows importados, con las credenciales **asignadas en los
+nodos** y el workflow 01 **sin activar** (el 02 sí, para el chat).
+
+**Después de cada clase**, si vas a repetirla tal cual, alcanza con el `TRUNCATE`.
+
+**Borrado total**, si querés empezar de cero de verdad — ojo, esto **destruye las
+credenciales y los workflows**, y vas a tener que volver a cargar las tres API keys:
+
+```bash
+cd clase-rag/docker
+docker compose down -v      # -v borra los volumenes
+docker compose up -d
+```
+
+Después: `n8n import:workflow` de los dos JSON, volver a crear las 3 credenciales,
+asignarlas en los 5 nodos, y volver a indexar.
+
+**Una advertencia que vale la pena:** la `N8N_ENCRYPTION_KEY` del `.env` cifra las
+credenciales. Si la cambiás o la perdés, las credenciales guardadas dejan de poder
+descifrarse aunque los volúmenes sigan ahí. Guardala junto con el resto del material.
